@@ -20,88 +20,87 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    let channel: ReturnType<typeof supabase.channel> | null = null;
+ useEffect(() => {
+  let channel: ReturnType<typeof supabase.channel> | null = null;
 
-    const checkSession = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        const currentUser = session?.user ?? null;
-        setUser(currentUser);
-        
-        if (currentUser) {
-          await fetchBookmarks(currentUser.id);
-        }
-      } catch (err) {
-        console.error("Session check error:", err);
-      } finally {
-        setLoading(false);
-      }
-    };
+  const setupForUser = async (currentUser: User | null) => {
+    setUser(currentUser);
 
-    checkSession();
+    if (channel) {
+      await supabase.removeChannel(channel);
+      channel = null;
+    }
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
-        const currentUser = session?.user ?? null;
-        setUser(currentUser);
+    if (currentUser) {
+      await fetchBookmarks(currentUser.id);
 
-        if (channel) {
-          await supabase.removeChannel(channel);
-          channel = null;
-        }
+      channel = supabase
+        .channel("bookmarks-changes")
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "bookmarks",
+            filter: `user_id=eq.${currentUser.id}`,
+          },
+          (payload) => {
+            console.log("Real-time update:", payload.eventType);
 
-        if (currentUser) {
-          await fetchBookmarks(currentUser.id);
+            if (payload.eventType === "INSERT" && payload.new) {
+              const newBookmark = payload.new as Bookmark;
+              setBookmarks((prev) => {
+                const exists = prev.some((b) => b.id === newBookmark.id);
+                if (exists) return prev;
+                return [newBookmark, ...prev];
+              });
+            }
 
-          channel = supabase
-            .channel("bookmarks-changes")
-            .on(
-              "postgres_changes",
-              {
-                event: "*",
-                schema: "public",
-                table: "bookmarks",
-                filter: `user_id=eq.${currentUser.id}`,
-              },
-              (payload) => {
-                console.log("Real-time update:", payload.eventType);
-                
-                // Handle different event types
-                if (payload.eventType === 'INSERT' && payload.new) {
-                  const newBookmark = payload.new as Bookmark;
-                  // Check if bookmark already exists to prevent duplicates
-                  setBookmarks(prev => {
-                    const exists = prev.some(b => b.id === newBookmark.id);
-                    if (exists) {
-                      console.log("Bookmark already exists, skipping duplicate");
-                      return prev;
-                    }
-                    return [newBookmark, ...prev];
-                  });
-                } else if (payload.eventType === 'DELETE' && payload.old) {
-                  setBookmarks(prev => prev.filter(b => b.id !== payload.old.id));
-                } else if (payload.eventType === 'UPDATE' && payload.new) {
-                  setBookmarks(prev => prev.map(b => 
-                    b.id === payload.new.id ? payload.new as Bookmark : b
-                  ));
-                }
-              }
-            )
-            .subscribe();
-        } else {
-          setBookmarks([]);
-        }
-      }
-    );
+            if (payload.eventType === "DELETE" && payload.old) {
+              setBookmarks((prev) =>
+                prev.filter((b) => b.id !== payload.old.id)
+              );
+            }
 
-    return () => {
-      subscription.unsubscribe();
-      if (channel) {
-        supabase.removeChannel(channel);
-      }
-    };
-  }, []);
+            if (payload.eventType === "UPDATE" && payload.new) {
+              setBookmarks((prev) =>
+                prev.map((b) =>
+                  b.id === payload.new.id ? (payload.new as Bookmark) : b
+                )
+              );
+            }
+          }
+        )
+        .subscribe();
+    } else {
+      setBookmarks([]);
+    }
+  };
+
+  const init = async () => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    await setupForUser(session?.user ?? null);
+    setLoading(false);
+  };
+
+  init();
+
+  const {
+    data: { subscription },
+  } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    await setupForUser(session?.user ?? null);
+    setLoading(false);
+  });
+
+  return () => {
+    subscription.unsubscribe();
+    if (channel) {
+      supabase.removeChannel(channel);
+    }
+  };
+}, []);
 
   const fetchBookmarks = async (userId: string) => {
     try {
@@ -141,7 +140,9 @@ export default function Home() {
       setError("");
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
-      window.location.href = "/";
+      setUser(null);
+      setBookmarks([]);
+
     } catch (err) {
       console.error("Logout error:", err);
       setError("Failed to sign out");

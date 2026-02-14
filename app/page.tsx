@@ -1,13 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { supabase } from "../lib/supabaseClient";
 import { User } from "@supabase/supabase-js";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 type Bookmark = {
   id: string;
@@ -23,37 +18,33 @@ export default function Home() {
   const [title, setTitle] = useState("");
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
 
   useEffect(() => {
-    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let channel: any = null;
 
-    const setupUser = async (currentUser: User | null) => {
+    const loadUser = async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      const currentUser = session?.user ?? null;
+      setUser(currentUser);
+
       if (!currentUser) {
-        setUser(null);
-        setBookmarks([]);
         setLoading(false);
         return;
       }
 
-      setUser(currentUser);
-
-      // Fetch bookmarks
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from("bookmarks")
         .select("*")
         .eq("user_id", currentUser.id)
         .order("created_at", { ascending: false });
 
-      if (error) {
-        console.error("Fetch error:", error);
-      } else {
-        setBookmarks(data || []);
-      }
+      setBookmarks(data || []);
 
-      // Setup realtime
       channel = supabase
-        .channel("bookmarks-realtime")
+        .channel("bookmarks")
         .on(
           "postgres_changes",
           {
@@ -75,16 +66,6 @@ export default function Home() {
                 prev.filter((b) => b.id !== payload.old.id)
               );
             }
-
-            if (payload.eventType === "UPDATE") {
-              setBookmarks((prev) =>
-                prev.map((b) =>
-                  b.id === payload.new.id
-                    ? (payload.new as Bookmark)
-                    : b
-                )
-              );
-            }
           }
         )
         .subscribe();
@@ -92,20 +73,12 @@ export default function Home() {
       setLoading(false);
     };
 
-    const init = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      await setupUser(session?.user ?? null);
-    };
-
-    init();
+    loadUser();
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      setupUser(session?.user ?? null);
+      setUser(session?.user ?? null);
     });
 
     return () => {
@@ -129,9 +102,7 @@ export default function Home() {
   const addBookmark = async () => {
     if (!title || !url || !user) return;
 
-    setError("");
-
-    const { error } = await supabase.from("bookmarks").insert([
+    await supabase.from("bookmarks").insert([
       {
         title,
         url,
@@ -139,13 +110,8 @@ export default function Home() {
       },
     ]);
 
-    if (error) {
-      setError("Failed to add bookmark");
-      console.error(error);
-    } else {
-      setTitle("");
-      setUrl("");
-    }
+    setTitle("");
+    setUrl("");
   };
 
   const deleteBookmark = async (id: string) => {
@@ -154,7 +120,7 @@ export default function Home() {
 
   if (loading) {
     return (
-      <div className="flex h-screen items-center justify-center text-xl">
+      <div className="flex h-screen items-center justify-center">
         Loading...
       </div>
     );
@@ -162,13 +128,10 @@ export default function Home() {
 
   if (!user) {
     return (
-      <div className="flex h-screen flex-col items-center justify-center bg-gradient-to-r from-purple-500 to-pink-500 text-white">
-        <h1 className="text-3xl font-bold mb-6">
-          Smart Bookmark App
-        </h1>
+      <div className="flex h-screen items-center justify-center">
         <button
           onClick={handleLogin}
-          className="bg-white text-black px-6 py-2 rounded-lg font-semibold"
+          className="bg-black text-white px-6 py-3 rounded"
         >
           Sign in with Google
         </button>
@@ -177,28 +140,21 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 p-6">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold">My Bookmarks</h1>
-        <button
-          onClick={handleLogout}
-          className="bg-red-500 text-white px-4 py-2 rounded"
-        >
-          Logout
-        </button>
+    <div className="p-6 max-w-xl mx-auto">
+      <div className="flex justify-between mb-4">
+        <h1 className="text-xl font-bold">My Bookmarks</h1>
+        <button onClick={handleLogout}>Logout</button>
       </div>
 
-      <div className="bg-white p-4 rounded shadow mb-6">
+      <div className="mb-4">
         <input
-          type="text"
-          placeholder="Bookmark Title"
+          placeholder="Title"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           className="border p-2 w-full mb-2"
         />
         <input
-          type="text"
-          placeholder="Bookmark URL"
+          placeholder="URL"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           className="border p-2 w-full mb-2"
@@ -207,35 +163,23 @@ export default function Home() {
           onClick={addBookmark}
           className="bg-blue-500 text-white px-4 py-2 rounded"
         >
-          Add Bookmark
+          Add
         </button>
-        {error && (
-          <p className="text-red-500 mt-2">{error}</p>
-        )}
       </div>
 
-      <div className="space-y-3">
-        {bookmarks.map((bookmark) => (
-          <div
-            key={bookmark.id}
-            className="bg-white p-4 rounded shadow flex justify-between items-center"
-          >
-            <a
-              href={bookmark.url}
-              target="_blank"
-              className="text-blue-600 underline"
-            >
-              {bookmark.title}
-            </a>
-            <button
-              onClick={() => deleteBookmark(bookmark.id)}
-              className="text-red-500"
-            >
-              Delete
-            </button>
-          </div>
-        ))}
-      </div>
+      {bookmarks.map((b) => (
+        <div
+          key={b.id}
+          className="border p-3 mb-2 flex justify-between"
+        >
+          <a href={b.url} target="_blank">
+            {b.title}
+          </a>
+          <button onClick={() => deleteBookmark(b.id)}>
+            Delete
+          </button>
+        </div>
+      ))}
     </div>
   );
 }

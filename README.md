@@ -1,3 +1,4 @@
+# I case of lagging or keep loading please open it in the incognito tab and logout and login again you'll see you bookmarks
 # 🔖 Smart Bookmark App
 
 A real-time bookmark manager built with Next.js 14, Supabase, and Tailwind CSS. Users can sign in with Google OAuth and manage their personal bookmarks with instant synchronization across multiple tabs and devices.
@@ -424,3 +425,4 @@ MIT License - feel free to use this code for your own projects.
 - OAuth authentication flows
 - Responsive UI design
 - Problem-solving and debugging skills# Deployment test
+-Icase of lagging or keep loading please open it in the incognito tab and logout and login again see you bookmarks
